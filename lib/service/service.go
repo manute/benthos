@@ -14,6 +14,7 @@ import (
 
 	"github.com/Jeffail/benthos/v3/internal/docs"
 	"github.com/Jeffail/benthos/v3/internal/filepath"
+	"github.com/Jeffail/benthos/v3/internal/template"
 	"github.com/Jeffail/benthos/v3/lib/api"
 	"github.com/Jeffail/benthos/v3/lib/config"
 	"github.com/Jeffail/benthos/v3/lib/log"
@@ -93,7 +94,29 @@ func OptOnManagerInit(fn ManagerInitFunc) func() {
 
 //------------------------------------------------------------------------------
 
-func readConfig(path string, resourcesPaths []string) (lints []string) {
+func readConfig(path string, resourcesPaths, templatesPaths []string) (lints []string) {
+	for _, tPath := range templatesPaths {
+		tmplConf, tLints, err := template.ReadConfig(tPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Template file read error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, l := range tLints {
+			lints = append(lints, fmt.Sprintf("template file %v: %v", tPath, l))
+		}
+
+		tmpl, err := tmplConf.Compile()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Template file read error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := template.RegisterTemplate(tmpl); err != nil {
+			fmt.Fprintf(os.Stderr, "Template file read error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// A list of default config paths to check for if not explicitly defined
 	defaultPaths := []string{
 		"/benthos.yaml",
@@ -102,23 +125,27 @@ func readConfig(path string, resourcesPaths []string) (lints []string) {
 	}
 
 	if len(path) > 0 {
-		var err error
-		if lints, err = config.Read(path, true, &conf); err != nil {
+		cLints, err := config.Read(path, true, &conf)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Configuration file read error: %v\n", err)
 			os.Exit(1)
 		}
+		lints = append(lints, cLints...)
 	} else {
 		// Iterate default config paths
 		for _, path := range defaultPaths {
-			if _, err := os.Stat(path); err == nil {
-				fmt.Fprintf(os.Stderr, "Config file not specified, reading from %v\n", path)
-
-				if lints, err = config.Read(path, true, &conf); err != nil {
-					fmt.Fprintf(os.Stderr, "Configuration file read error: %v\n", err)
-					os.Exit(1)
-				}
-				break
+			if _, err := os.Stat(path); err != nil {
+				continue
 			}
+			fmt.Fprintf(os.Stderr, "Config file not specified, reading from %v\n", path)
+
+			cLints, err := config.Read(path, true, &conf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Configuration file read error: %v\n", err)
+				os.Exit(1)
+			}
+			lints = append(lints, cLints...)
+			break
 		}
 	}
 
@@ -159,7 +186,7 @@ func readConfig(path string, resourcesPaths []string) (lints []string) {
 
 func cmdService(
 	confPath string,
-	resourcesPaths []string,
+	resourcesPaths, templatesPaths []string,
 	overrideLogLevel string,
 	strict bool,
 	streamsMode bool,
@@ -170,7 +197,11 @@ func cmdService(
 		fmt.Printf("Failed to resolve resource glob pattern: %v\n", err)
 		return 1
 	}
-	lints := readConfig(confPath, resourcesPaths)
+	if templatesPaths, err = filepath.Globs(templatesPaths); err != nil {
+		fmt.Printf("Failed to resolve template glob pattern: %v\n", err)
+		return 1
+	}
+	lints := readConfig(confPath, resourcesPaths, templatesPaths)
 	if strict && len(lints) > 0 {
 		for _, lint := range lints {
 			fmt.Fprintln(os.Stderr, lint)

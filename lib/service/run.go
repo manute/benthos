@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/Jeffail/benthos/v3/internal/cli/template"
 	"github.com/Jeffail/benthos/v3/internal/docs"
 	"github.com/Jeffail/benthos/v3/lib/config"
 	"github.com/Jeffail/benthos/v3/lib/service/blobl"
@@ -114,6 +115,11 @@ func Run() {
 			Aliases: []string{"r"},
 			Usage:   "pull in extra resources from a file, which can be referenced the same as resources defined in the main config, supports glob patterns (requires quotes)",
 		},
+		&cli.StringSliceFlag{
+			Name:    "templates",
+			Aliases: []string{"t"},
+			Usage:   "EXPERIMENTAL: import Benthos templates, supports glob patterns (requires quotes)",
+		},
 		&cli.BoolFlag{
 			Name:  "chilled",
 			Value: false,
@@ -147,6 +153,7 @@ func Run() {
 			os.Exit(cmdService(
 				c.String("config"),
 				c.StringSlice("resources"),
+				c.StringSlice("templates"),
 				c.String("log.level"),
 				!c.Bool("chilled"),
 				false,
@@ -165,7 +172,7 @@ func Run() {
 
    benthos -c ./config.yaml echo | less`[4:],
 				Action: func(c *cli.Context) error {
-					readConfig(c.String("config"), c.StringSlice("resources"))
+					readConfig(c.String("config"), c.StringSlice("resources"), nil)
 
 					var node yaml.Node
 					err := node.Encode(conf)
@@ -210,6 +217,7 @@ func Run() {
 					os.Exit(cmdService(
 						c.String("config"),
 						c.StringSlice("resources"),
+						c.StringSlice("templates"),
 						c.String("log.level"),
 						!c.Bool("chilled"),
 						true,
@@ -243,6 +251,7 @@ func Run() {
 			},
 			createCliCommand(),
 			test.CliCommand(testSuffix),
+			template.CliCommand(),
 			blobl.CliCommand(),
 		},
 	}
@@ -272,7 +281,7 @@ func Run() {
 		}
 
 		deprecatedExecute(*configPath, testSuffix)
-		os.Exit(cmdService(*configPath, nil, "", false, false, nil))
+		os.Exit(cmdService(*configPath, nil, nil, "", false, false, nil))
 		return nil
 	}
 

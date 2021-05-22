@@ -2,9 +2,11 @@ package template
 
 import (
 	"fmt"
+	"io/ioutil"
 
 	"github.com/Jeffail/benthos/v3/internal/bloblang"
 	"github.com/Jeffail/benthos/v3/internal/docs"
+	"gopkg.in/yaml.v3"
 )
 
 // FieldConfig describes a configuration field used in the template.
@@ -55,11 +57,36 @@ func (c Config) ComponentSpec() docs.ComponentSpec {
 // Compile attempts to validate the config and parse any mappings.
 func (c Config) Compile() (*Compiled, error) {
 	spec := c.ComponentSpec()
-	mapping, err := bloblang.NewMapping(c.Mapping, "")
+	mapping, err := bloblang.NewMapping("", c.Mapping)
 	if err != nil {
 		return nil, fmt.Errorf("template mapping: %w", err)
 	}
 	return &Compiled{spec, mapping}, nil
+}
+
+// ReadConfig attempts to read a template configuration file.
+func ReadConfig(path string) (conf Config, lints []string, err error) {
+	var templateBytes []byte
+	if templateBytes, err = ioutil.ReadFile(path); err != nil {
+		return
+	}
+
+	if err = yaml.Unmarshal(templateBytes, &conf); err != nil {
+		return
+	}
+
+	var node yaml.Node
+	if err = yaml.Unmarshal(templateBytes, &node); err != nil {
+		return
+	}
+
+	for _, l := range ConfigSpec().LintNode(docs.NewLintContext(), node.Content[0]) {
+		if l.Level == docs.LintError {
+			lints = append(lints, fmt.Sprintf("line %v: %v", l.Line, l.What))
+		}
+	}
+
+	return
 }
 
 //------------------------------------------------------------------------------
@@ -82,7 +109,7 @@ func ConfigSpec() docs.FieldSpecs {
 		),
 		docs.FieldCommon("summary", "A short summary of the component."),
 		docs.FieldCommon("description", "A longer form description of the component and how to use it."),
-		docs.FieldCommon("fields", "The fields of the template.").WithChildren(FieldConfigSpec()...),
-		docs.FieldCommon("mapping", "A [Bloblang](/docs/guides/bloblang/about) mapping that translates the fields of the template into a valid Benthos configuration for the target component type."),
+		docs.FieldCommon("fields", "The fields of the template.").Array().WithChildren(FieldConfigSpec()...),
+		docs.FieldCommon("mapping", "A [Bloblang](/docs/guides/bloblang/about) mapping that translates the fields of the template into a valid Benthos configuration for the target component type.").Linter(docs.LintBloblangMapping),
 	}
 }
