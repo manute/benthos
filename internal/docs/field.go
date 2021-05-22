@@ -627,3 +627,71 @@ func FieldsFromNode(node *yaml.Node) FieldSpecs {
 	}
 	return fields
 }
+
+func getDefault(pathName string, field FieldSpec) (interface{}, error) {
+	if field.Default != nil {
+		// TODO: Should be deep copy here?
+		return *field.Default, nil
+	} else if len(field.Children) > 0 {
+		m := map[string]interface{}{}
+		for _, v := range field.Children {
+			var err error
+			if m[v.Name], err = getDefault(pathName+"."+v.Name, v); err != nil {
+				return nil, err
+			}
+		}
+		return m, nil
+	}
+	return nil, fmt.Errorf("field '%v' is required and was not present in the config", pathName)
+}
+
+// NodeToMap converts a yaml node into a generic map structure by referencing
+// expected fields, adding default values to the map when the node does not
+// contain them.
+func (f FieldSpecs) NodeToMap(node *yaml.Node) (map[string]interface{}, error) {
+	pendingFieldsMap := map[string]FieldSpec{}
+	for _, field := range f {
+		pendingFieldsMap[field.Name] = field
+	}
+
+	resultMap := map[string]interface{}{}
+
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		fieldName := node.Content[i].Value
+
+		if f, exists := pendingFieldsMap[fieldName]; exists {
+			delete(pendingFieldsMap, f.Name)
+
+			if len(f.Children) > 0 {
+				var err error
+				if resultMap[fieldName], err = f.Children.NodeToMap(node.Content[i+1]); err != nil {
+					return nil, fmt.Errorf("field '%v': %w", fieldName, err)
+				}
+			} else {
+				// TODO: Use a type annotation for the field to force proper
+				// parsing. This would avoid rough edges in YAML such as the
+				// Norway problem.
+				var v interface{}
+				if err := node.Content[i+1].Decode(&v); err != nil {
+					return nil, err
+				}
+				resultMap[fieldName] = v
+			}
+		} else {
+			var v interface{}
+			if err := node.Content[i+1].Decode(&v); err != nil {
+				return nil, err
+			}
+			resultMap[fieldName] = v
+		}
+	}
+
+	for k, v := range pendingFieldsMap {
+		var err error
+		if resultMap[k], err = getDefault(k, v); err != nil {
+			return nil, err
+		}
+	}
+
+	return resultMap, nil
+}
